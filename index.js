@@ -1,4 +1,3 @@
-// 
 
 const express = require ('express');
 const mongoose = require('mongoose');
@@ -6,26 +5,48 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const path = require("path");
 const cors = require('cors');
-const { log, error } = require('console');
-const { request } = require('http');
-// const { type } = require('os'); // Not used, can be removed
-// const { log } = require('console'); // Not used, can be removed
+const dotEnv = require('dotenv');
+const cloudinary = require('cloudinary').v2; // Import Cloudinary
+const { CloudinaryStorage } = require('multer-storage-cloudinary'); // Import Cloudinary storage for Multer
 
-const port = 4000;
+dotEnv.config();
+// Use process.env.PORT provided by Render, or default to 4000 for local development
+const PORT = process.env.PORT || 4000;
 const app = express();
 
-app.use(express.json()); // Parses JSON bodies
-app.use(cors()); // Enables Cross-Origin Resource Sharing
+app.use(express.json());
 
-// --- Database Connection with MongoDB ---
-mongoose.connect("mongodb+srv://sk9618620:E-commerce123456@cluster0.fmxs1ei.mongodb.net/E-commerce")
+// --- IMPORTANT: Configure CORS for deployment ---
+// This assumes your frontend will also be deployed (e.g., on Render, Netlify, Vercel).
+// Set the FRONTEND_URL environment variable on your Render backend service.
+// Example: FRONTEND_URL=https://your-ecommerce-frontend-xyz.onrender.com
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'; // Default for local frontend dev
+
+app.use(cors({
+  origin: FRONTEND_URL, // Allow requests only from your frontend's URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Specify allowed HTTP methods
+  allowedHeaders: ['Content-Type', 'auth-token'], // Specify allowed headers, including your custom auth-token
+}));
+
+// --- Configure Cloudinary ---
+// These credentials must be set as environment variables on Render.com
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true // Use HTTPS
+});
+
+
+
+// To this:
+mongoose.connect(process.env.MONGO_URI)
 .then(()=>{
     console.log("Database connected successfully");
 })
-.catch((err) => { // Added error handling for database connection
+.catch((err) => {
     console.error("Database connection failed:", err);
-    // You might want to exit the process or handle this more gracefully
-    // process.exit(1);
+    // process.exit(1); // Consider exiting process if DB connection is critical
 });
 
 // --- API Creation ---
@@ -33,27 +54,29 @@ app.get("/",(req,res)=>{
     res.send("Express App is running");
 });
 
-// --- Image Storage Engine ---
-// Ensure 'upload/images' directory exists in your project root
-// before running the server, or create it programmatically.
-const storage = multer.diskStorage({
-    destination:'./upload/images',
-    filename:(req,file,cb)=>{
-        return cb(null,`${file.fieldname}_${Date.now()}${path.extname(file.originalname)}`)
-    }
+// --- Image Storage Engine (NOW USING CLOUDINARY) ---
+// This replaces the local disk storage
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'e-commerce-uploads', // Folder name in your Cloudinary account to store images
+    format: async (req, file) => 'png', // You can specify desired format (e.g., 'jpg', 'webp')
+    public_id: (req, file) => `${file.fieldname}_${Date.now()}`, // Generates a unique public ID for each image
+  },
 });
-const upload = multer({storage:storage});
+
+const upload = multer({ storage: storage });
 
 // --- Creating Upload Endpoints for Images ---
-app.use('/images',express.static('upload/images'));
-
+// This endpoint now uploads directly to Cloudinary and returns the Cloudinary URL
 app.post('/upload', upload.single('product'), (req,res)=>{
-    if (!req.file) { // Add check if file was uploaded
+    if (!req.file) {
         return res.status(400).json({ success: 0, message: "No file uploaded." });
     }
+    // req.file.path contains the secure Cloudinary URL of the uploaded image
     res.json({
         success:1,
-        image_url:`http://localhost:${port}/images/${req.file.filename}`
+        image_url:req.file.path // This is the public URL from Cloudinary
     });
 });
 
@@ -61,14 +84,14 @@ app.post('/upload', upload.single('product'), (req,res)=>{
 const Product = mongoose.model("product",{
     id:{
         type:Number,
-        required:true, // Corrected from require:true
-        unique:true // Added unique constraint for custom ID, handle errors if not
+        required:true,
+        unique:true
     },
     name:{
         type:String,
         required:true
     },
-    image:{
+    image:{ // This field will now store the Cloudinary image URL
         type:String,
         required:true
     },
@@ -88,7 +111,7 @@ const Product = mongoose.model("product",{
         type:Date,
         default:Date.now
     },
-    available:{ // Corrected from avilable to available
+    available:{
         type:Boolean,
         default:true
     }
@@ -100,7 +123,7 @@ app.post('/addproduct',async (req,res)=>{
         let products = await Product.find({});
         let id;
         if(products.length > 0){
-            let last_product = products[products.length - 1]; // More direct way to get last element
+            let last_product = products[products.length - 1];
             id = last_product.id + 1;
         } else {
             id = 1;
@@ -109,13 +132,12 @@ app.post('/addproduct',async (req,res)=>{
         const product = new Product({
             id:id,
             name:req.body.name,
-            image:req.body.image,
+            image:req.body.image, // This will be the Cloudinary URL passed from frontend
             category:req.body.category,
             new_price:req.body.new_price,
             old_price:req.body.old_price,
-            // 'date' and 'available' will use their defaults
         });
-        console.log(product);
+        console.log("Attempting to save product:", product);
         await product.save();
         console.log("Product saved successfully");
         res.json({
@@ -124,8 +146,7 @@ app.post('/addproduct',async (req,res)=>{
         });
     } catch (error) {
         console.error("Error adding product:", error);
-        // Handle potential duplicate ID error if 'id' is unique
-        if (error.code === 11000) { // MongoDB duplicate key error code
+        if (error.code === 11000) {
             return res.status(409).json({
                 success:false,
                 message:"Product with this ID already exists. Please try again."
@@ -133,7 +154,7 @@ app.post('/addproduct',async (req,res)=>{
         }
         res.status(500).json({
             success:false,
-            message:"Failed to add product. " + error.message // Include error message for debugging
+            message:"Failed to add product. " + error.message
         });
     }
 });
@@ -141,25 +162,39 @@ app.post('/addproduct',async (req,res)=>{
 // --- API to Delete Product ---
 app.post('/removeproduct', async (req, res) => {
     try {
-        const productIdToDelete = req.body.id;
+        const productIdToDelete = req.body.id; // This will be MongoDB's _id string from frontend
 
         if (!productIdToDelete) {
             console.log("Error: Product ID not provided for removal.");
             return res.status(400).json({ success: false, message: "Product ID is required." });
         }
 
-        // Use findOneAndDelete for more flexibility (e.g., if you want to find by custom 'id' field)
-        // If req.body.id is MongoDB's _id, findByIdAndDelete is fine.
-        // Assuming req.body.id is the custom 'id' (Number) field:
         const deletedProduct = await Product.findByIdAndDelete(productIdToDelete);
-
-        // If req.body.id is MongoDB's _id (ObjectId string):
-        // const deletedProduct = await Product.findByIdAndDelete(productIdToDelete);
 
         if (!deletedProduct) {
             console.log(`Product with ID ${productIdToDelete} not found.`);
             return res.status(404).json({ success: false, message: "Product not found." });
         }
+
+        // Optional: If you want to delete the image from Cloudinary when product is removed
+        // This requires extracting the public ID from the Cloudinary URL
+        // Example: https://res.cloudinary.com/dbjjuaqzg/image/upload/v1678888888/e-commerce-uploads/product_1678888888.png
+        // Public ID would be 'e-commerce-uploads/product_1678888888'
+        /*
+        if (deletedProduct.image) {
+            const urlParts = deletedProduct.image.split('/');
+            const folderName = urlParts[urlParts.length - 2]; // e.g., 'e-commerce-uploads'
+            const fileNameWithExtension = urlParts[urlParts.length - 1]; // e.g., 'product_1678888888.png'
+            const publicId = `${folderName}/${fileNameWithExtension.split('.')[0]}`; // Combines folder and filename without extension
+
+            try {
+                await cloudinary.uploader.destroy(publicId);
+                console.log(`Image ${publicId} deleted from Cloudinary.`);
+            } catch (cloudinaryError) {
+                console.error(`Failed to delete image ${publicId} from Cloudinary:`, cloudinaryError);
+            }
+        }
+        */
 
         console.log("Product removed:", deletedProduct.name);
         res.json({
@@ -170,12 +205,9 @@ app.post('/removeproduct', async (req, res) => {
 
     } catch (error) {
         console.error("Error removing product:", error);
-
-        // Handle CastError specifically: occurs if ID format is invalid for Mongoose's _id
         if (error.name === 'CastError' && error.path === '_id') {
-            return res.status(400).json({ success: false, message: "Invalid Product ID format. Please provide a valid MongoDB ObjectId if deleting by _id." });
+            return res.status(400).json({ success: false, message: "Invalid Product ID format. Please provide a valid MongoDB ObjectId." });
         }
-
         res.status(500).json({ success: false, message: "Server error during product removal: " + error.message });
     }
 });
@@ -203,15 +235,15 @@ const Users = mongoose.model('Users',{
     email:{
         type:String,
         unique:true,
-        required:true // Email should probably be required
+        required:true
     },
     password:{
         type:String,
-        required:true // Password should be required
+        required:true
     },
-    cartData:{ // Corrected from cartDara
-        type:Object, // Stores product ID as key, quantity as value
-        default:{} // Default to an empty object
+    cartData:{
+        type:Object,
+        default:{}
     },
     date:{
         type:Date,
@@ -222,42 +254,42 @@ const Users = mongoose.model('Users',{
 // --- Creating Endpoint for Registering User (Signup) ---
 app.post('/signup',async(req,res)=>{
     try {
+        if (!req.body.name || !req.body.email || !req.body.password) {
+            return res.status(400).json({ success: false, errors: "Missing required fields (name, email, password)." });
+        }
+
         let check = await Users.findOne({email:req.body.email});
         if(check){
-            // Corrected 'succes' to 'success'
             return res.status(400).json({success:false,errors:"Existing user found with same Email ID"});
         }
 
-        // Corrected the problematic loop and initialized cart as an empty object
-        let cart = {}; // An empty object to store cart items (e.g., { productId: quantity })
+        let cart = {};
         for (let i = 1; i <= 300; i++) {
-    cart[i] = 0;
-}
+            cart[i] = 0;
+        }
+
         const user = new Users({
             name:req.body.name,
             email:req.body.email,
             password:req.body.password,
-            cartData:cart, // Corrected 'cartDara' to 'cartData'
+            cartData:cart,
         });
 
         await user.save();
 
         const data = {
             user:{
-                id:user.id // This is the MongoDB ObjectId for the user
+                id:user.id
             }
         };
 
-        // For production, the secret should be in an environment variable
-        // const token = jwt.sign(data, process.env.JWT_SECRET || 'secret_ecom');
-        const token = jwt.sign(data,'secret_ecom'); // Using hardcoded for simplicity in this example
+        const token = jwt.sign(data,'secret_ecom');
 
         res.json({success:true,token});
 
     } catch (error) {
         console.error("Error during user signup:", error);
-        // Handle specific errors like duplicate email if unique constraint fails
-        if (error.code === 11000) { // MongoDB duplicate key error code
+        if (error.code === 11000) {
             return res.status(409).json({
                 success:false,
                 message:"Email already registered. Please use a different email."
@@ -270,91 +302,171 @@ app.post('/signup',async(req,res)=>{
     }
 });
 
-//creating end point for user login
+// --- Creating Endpoint for User Login ---
 app.post('/login',async (req,res)=>{
-    let user = await Users.findOne({email:req.body.email});
-    if(user){
-        const passCompare = req.body.password === user.password;
-        if(passCompare){
-            const data = {
-                user:{
-                    id:user.id
+    try {
+        if (!req.body.email || !req.body.password) {
+            return res.status(400).json({ success: false, errors: "Missing email or password." });
+        }
+
+        let user = await Users.findOne({email:req.body.email});
+        if(user){
+            const passCompare = req.body.password === user.password;
+            if(passCompare){
+                const data = {
+                    user:{
+                        id:user.id
+                    }
                 }
+                const token = jwt.sign(data,'secret_ecom');
+                res.json({success:true,token});
             }
-            const token = jwt.sign(data,'secret_ecom');
-            res.json({success:true,token});
+            else{
+                res.json({success:false,errors:"Wrong password"});
+            }
         }
         else{
-            res.json({success:false,errors:"Wrong password"});
+            res.json({success:false,errors:"Wrong Email-id"});
         }
+    } catch (error) {
+        console.error("Error during user login:", error);
+        res.status(500).json({ success: false, message: "Server error during login. " + error.message });
     }
-    else{
-        res.json({success:false,errors:"Wrong Email-id"});
-    }
-})
+});
 
-//craeting end point for new collection data
+// --- Creating Endpoint for New Collection Data ---
 app.get('/newcollection',async (req,res)=>{
-    let products = await Product.find({});
-    let newcollection = products.slice(1).slice(-8);
-    console.log("Newcollection feteched");
-    res.send(newcollection);
-})
+    try {
+        let products = await Product.find({});
+        let newcollection = products.slice(-8);
+        console.log("Newcollection fetched");
+        res.send(newcollection);
+    } catch (error) {
+        console.error("Error fetching new collection:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch new collection. " + error.message });
+    }
+});
 
-//creatimg end point for popular in women
-
+// --- Creating Endpoint for Popular in Women ---
 app.get('/popularinwomen',async (req,res)=>{
-    let products = await Product.find({category:"Women"});
-    let popular_in_women = products.slice(0,4);
-    console.log("popular in women fetched");
-    res.send(popular_in_women);
-})
+    try {
+        let products = await Product.find({category:"Women"});
+        let popular_in_women = products.slice(0,4);
+        console.log("Popular in women fetched");
+        res.send(popular_in_women);
+    } catch (error) {
+        console.error("Error fetching popular in women products:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch popular in women products. " + error.message });
+    }
+});
 
-//creating middleware to fetch user
+// --- Middleware to fetch user from JWT token ---
 const fetchUser = async (req,res,next)=>{
     const token = req.header('auth-token');
     if (!token) {
-        res.status(401).send({errors:"please authenticate using valid token"})
+        return res.status(401).send({errors:"Please authenticate using a valid token"})
     }
-    else{
-        try{
-            const data = jwt.verify(token,'secret_ecom');
-            req.user = data.user;
-            next();
-        }catch{
-            res.status(401).send({errors:"please authenticate using a valid token"});
-        }
+    try{
+        const data = jwt.verify(token,'secret_ecom');
+        req.user = data.user;
+        next();
+    }catch(error){
+        console.error("JWT verification error:", error);
+        return res.status(401).send({errors:"Please authenticate using a valid token"});
     }
-}
+};
 
-//creating end point for cart products
+// --- Creating Endpoint for Adding Product to Cart ---
 app.post('/addtocart',fetchUser, async (req,res)=>{
-    console.log("Added",req.body.itemId);
-    let userData = await Users.findOne({_id:req.user.id});
-    userData.cartData[req.body.itemId] +=1;
-    await Users.findOneAndUpdate({_id:req.user.id},{cartData:userData.cartData})
-    res.send("Added")
-    
-})
+    try {
+        const productId = req.body.itemId;
 
-//creating end point to remove product from cart data
-app.post('/removefromcart',fetchUser,async(req,res)=>{
-    console.log("remove",req.body.itemId);
-     let userData = await Users.findOne({_id:req.user.id});
-     if(userData.cartData[req.body.itemId]>0)
-    userData.cartData[req.body.itemId] -=1;
-    await Users.findOneAndUpdate({_id:req.user.id},{cartData:userData.cartData})
-    res.send("Removed")
-})
+        if (!productId) {
+            return res.status(400).json({ success: false, message: "Product ID (itemId) is required." });
+        }
 
-//creating endpoint to get cart data
-app.post('/getcart',fetchUser,async(req,res)=>{
-    console.log("GetCart");
-    let userData = await Users.findOne({_id:req.user.id});
-    res.json(userData.cartData);
-})
+        if (typeof productId !== 'number' || productId < 1 || productId > 300) {
+            return res.status(400).json({ success: false, message: "Invalid product ID. Must be a number between 1 and 300." });
+        }
+
+        let userData = await Users.findOne({_id:req.user.id});
+
+        if (!userData) {
+            return res.status(404).json({ success: false, message: "User not found." });
+        }
+
+        if (!userData.cartData || typeof userData.cartData !== 'object') {
+            userData.cartData = {};
+        }
+
+        userData.cartData[productId] = (userData.cartData[productId] || 0) + 1;
+
+        await Users.findOneAndUpdate({_id:req.user.id},{cartData:userData.cartData});
+
+        res.json({ success: true, message: "Product added to cart successfully!", cartData: userData.cartData });
+
+    } catch (error) {
+        console.error("Error adding product to cart:", error);
+        res.status(500).json({ success: false, message: "Server error adding product to cart. " + error.message });
+    }
+});
+
+// --- Creating Endpoint for Removing Product from Cart ---
+app.post('/removefromcart', fetchUser, async (req, res) => {
+    try {
+        const productId = req.body.itemId;
+
+        if (!productId) {
+            return res.status(400).json({ success: false, message: "Product ID (itemId) is required." });
+        }
+
+        if (typeof productId !== 'number' || productId < 1 || productId > 300) {
+            return res.status(400).json({ success: false, message: "Invalid product ID. Must be a number between 1 and 300." });
+        }
+
+        let userData = await Users.findOne({ _id: req.user.id });
+
+        if (!userData) {
+            return res.status(404).json({ success: false, message: "User not found." });
+        }
+
+        if (!userData.cartData || typeof userData.cartData !== 'object' || !userData.cartData[productId]) {
+            return res.status(400).json({ success: false, message: "Product not found in cart or quantity is already 0." });
+        }
+
+        if (userData.cartData[productId] > 1) {
+            userData.cartData[productId] -= 1;
+        } else {
+            delete userData.cartData[productId];
+        }
+
+        await Users.findOneAndUpdate({ _id: req.user.id }, { cartData: userData.cartData });
+
+        res.json({ success: true, message: "Product removed from cart successfully.", cartData: userData.cartData });
+
+    } catch (error) {
+        console.error("Error removing product from cart:", error);
+        res.status(500).json({ success: false, message: "Server error removing product from cart. " + error.message });
+    }
+});
+
+// --- API to Get Cart Data (Protected) ---
+app.post('/getcart', fetchUser, async (req, res) => {
+    try {
+        let userData = await Users.findOne({ _id: req.user.id });
+        if (!userData) {
+            return res.status(404).json({ success: false, message: "User not found." });
+        }
+        console.log("Cart data fetched for user:", req.user.id);
+        res.json({ success: true, cartData: userData.cartData });
+    } catch (error) {
+        console.error("Error fetching cart data:", error);
+        res.status(500).json({ success: false, message: "Server error fetching cart data. " + error.message });
+    }
+});
+
 
 // --- Start the Server ---
-app.listen(port,()=>{
-    console.log(`Server running on port ${port}`);
+app.listen(PORT,()=>{
+    console.log(`Server running on port ${PORT}`);
 });
