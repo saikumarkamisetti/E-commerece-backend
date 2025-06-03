@@ -8,6 +8,7 @@ const cors = require('cors');
 const dotEnv = require('dotenv');
 const cloudinary = require('cloudinary').v2; // Import Cloudinary
 const { CloudinaryStorage } = require('multer-storage-cloudinary'); // Import Cloudinary storage for Multer
+const cors = require('cors');
 
 dotEnv.config();
 // Use process.env.PORT provided by Render, or default to 4000 for local development
@@ -21,6 +22,10 @@ app.use(express.json());
 // Set the FRONTEND_URL environment variable on your Render backend service.
 // Example: FRONTEND_URL=https://your-ecommerce-frontend-xyz.onrender.com
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'; // Default for local frontend dev
+
+app.use(cors({
+  origin: 'http://localhost:5173'
+}));
 
 app.use(cors({
   origin: FRONTEND_URL, // Allow requests only from your frontend's URL
