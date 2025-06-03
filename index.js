@@ -491,6 +491,31 @@ app.get('/newcollection', async (req, res) => {
         console.error("Error fetching new collection:", error);
         res.status(500).json({ success: false, message: "Failed to fetch new collection. " + error.message });
     }
+<<<<<<< HEAD
+=======
+});
+
+// --- Creating Endpoint for Popular in Women ---
+app.get('/popularinwomen', async (req, res) => {
+    try {
+        let products = await Product.find({ category: "women" }); // Use lowercase "women" for consistency
+        if (!products) {
+            return res.status(500).json({ success: false, message: "Failed to retrieve popular women's products." });
+        }
+        let popular_in_women = products.slice(0, 4); // Get first 4 products
+        console.log("Popular in women fetched");
+        res.json(popular_in_women);
+    } catch (error) {
+        console.error("Error fetching popular in women products:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch popular in women products. " + error.message });
+    }
+});
+
+
+// --- Start the Server ---
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+>>>>>>> 8a9ce23ef09bbf439c57ae97dbc4f4f66995b4e2
 });
 
 // --- Creating Endpoint for Popular in Women ---
