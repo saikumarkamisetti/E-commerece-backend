@@ -8,7 +8,7 @@ const cors = require('cors');
 const dotEnv = require('dotenv');
 const cloudinary = require('cloudinary').v2; // Import Cloudinary
 const { CloudinaryStorage } = require('multer-storage-cloudinary'); // Import Cloudinary storage for Multer
-const cors = require('cors');
+
 
 dotEnv.config();
 // Use process.env.PORT provided by Render, or default to 4000 for local development
