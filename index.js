@@ -2,57 +2,33 @@ const express = require('express');
 const mongoose = require('mongoose');
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
-const path = require("path"); // Still useful for general path handling, even with Cloudinary
+const path = require("path"); // Although not directly used for local storage anymore, it's a common import
 const cors = require('cors');
-const dotEnv = require('dotenv');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const bcrypt = require('bcryptjs'); // For password hashing
+const dotEnv = require('dotenv');
 
-dotEnv.config(); // Load environment variables from .env file
+// Load environment variables from .env file in local development
+dotEnv.config();
 
 // Use process.env.PORT provided by Render, or default to 4000 for local development
 const PORT = process.env.PORT || 4000;
 const app = express();
 
-app.use(express.json()); // Middleware to parse JSON request bodies
+app.use(express.json());
 
-// --- CORS Configuration (Corrected & Efficient) ---
-// This handles both local development and deployed frontend URLs.
-// IMPORTANT: Set FRONTEND_URL and NODE_ENV environment variables on Render.com
-// Example:
-// NODE_ENV=production
-// FRONTEND_URL=https://your-ecommerce-frontend-xyz.onrender.com
-// JWT_SECRET=your_super_secret_jwt_key_here
-
-const ALLOWED_LOCAL_ORIGINS = [
-    'http://localhost:5173', // Your current local development frontend
-    'http://localhost:3000'  // Another common local frontend port if you use it
-];
-
-const getCorsOrigin = (origin, callback) => {
-    // For development, allow specific local origins OR the deployed frontend URL
-    if (process.env.NODE_ENV === 'development') {
-        if (!origin || ALLOWED_LOCAL_ORIGINS.includes(origin)) {
-            return callback(null, true);
-        }
-    } else { // Production environment
-        if (origin === process.env.FRONTEND_URL) {
-            return callback(null, true);
-        }
-    }
-    // Deny all other origins
-    callback(new Error('Not allowed by CORS'));
-};
+// --- Configure CORS for deployment ---
+// FRONTEND_URL must be set as an environment variable on Render for your backend service.
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'; // Default for local frontend dev
 
 app.use(cors({
-    origin: getCorsOrigin,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'], // Specify allowed HTTP methods
-    allowedHeaders: ['Content-Type', 'auth-token'], // Specify allowed headers
-    credentials: true // Allow cookies/authorization headers if needed (for JWT)
+    origin: FRONTEND_URL, // Corrected to use template literal if needed, but direct variable is fine here
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'auth-token'],
 }));
 
-// --- Cloudinary Configuration ---
+// --- Configure Cloudinary ---
+// These credentials must be set as environment variables on Render.com
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -60,128 +36,124 @@ cloudinary.config({
     secure: true // Use HTTPS
 });
 
-// --- MongoDB Connection ---
+// --- Database Connection with MongoDB ---
+// MONGO_URI must be set as an environment variable on Render.com
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => {
-        console.log("Database connected successfully");
-    })
-    .catch((err) => {
-        console.error("Database connection failed:", err);
-        // It's often good practice to exit if the DB connection fails on startup
-        process.exit(1);
-    });
+.then(()=>{
+    console.log("Database connected successfully");
+})
+.catch((err) => {
+    console.error("Database connection failed:", err);
+    // In a production app, you might want to exit the process or handle this more gracefully
+    // process.exit(1);
+});
 
 // --- API Creation ---
-app.get("/", (req, res) => {
+app.get("/",(req,res)=>{
     res.send("Express App is running");
 });
 
-// --- Image Storage Engine (Cloudinary) ---
+// --- Image Storage Engine (USING CLOUDINARY) ---
+// This replaces the local disk storage
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: 'e-commerce-uploads', // Folder name in your Cloudinary account
-        format: async (req, file) => 'png', // Can be 'jpg', 'webp', etc.
-        public_id: (req, file) => `${file.fieldname}_${Date.now()}_${Math.floor(Math.random() * 1000)}`, // More unique ID
+        format: async (req, file) => 'png', // Specify desired format
+        // Corrected: Use backticks for template literal for public_id
+        public_id: (req, file) => `${file.fieldname}_${Date.now()}`, // Unique public ID
     },
 });
 
 const upload = multer({ storage: storage });
 
 // --- Creating Upload Endpoint for Images ---
-app.post('/upload', upload.single('product'), (req, res) => {
+// This endpoint now uploads directly to Cloudinary and returns the Cloudinary URL
+app.post('/upload', upload.single('product'), (req,res)=>{
     if (!req.file) {
-        return res.status(400).json({ success: 0, message: "No file uploaded. Please ensure 'product' field is correct and file is valid." });
+        return res.status(400).json({ success: 0, message: "No file uploaded." });
     }
     res.json({
-        success: 1,
-        image_url: req.file.path // Cloudinary URL
+        success:1,
+        image_url:req.file.path // This is the public URL from Cloudinary
     });
 });
 
-// --- Schema for Products ---
-const Product = mongoose.model("Product", { // Changed model name to singular for convention
-    id: {
-        type: Number,
-        required: true,
-        unique: true
+// --- Schema for Creating Products ---
+const Product = mongoose.model("product",{
+    id:{
+        type:Number,
+        required:true, // Corrected from 'require'
+        unique:true // Added unique constraint
     },
-    name: {
-        type: String,
-        required: true
+    name:{
+        type:String,
+        required:true // Corrected from 'require'
     },
-    image: {
-        type: String,
-        required: true
+    image:{
+        type:String,
+        required:true // Corrected from 'require'
     },
-    category: {
-        type: String,
-        required: true
+    category:{
+        type:String,
+        required:true
     },
-    new_price: {
-        type: Number,
-        required: true
+    new_price:{
+        type:Number,
+        required:true // Corrected from 'require'
     },
-    old_price: {
-        type: Number,
-        required: true
+    old_price:{
+        type:Number,
+        required:true // Corrected from 'require'
     },
-    date: {
-        type: Date,
-        default: Date.now
+    date:{
+        type:Date,
+        default:Date.now
     },
-    available: {
-        type: Boolean,
-        default: true
+    available:{ // Corrected from 'avilable' to 'available'
+        type:Boolean,
+        default:true
     }
 });
 
 // --- API to Add Product ---
-app.post('/addproduct', async (req, res) => {
+app.post('/addproduct',async (req,res)=>{
     try {
-        // Input validation
-        const { name, image, category, new_price, old_price } = req.body;
-        if (!name || !image || !category || !new_price || !old_price) {
-            return res.status(400).json({ success: false, message: "Missing required product fields." });
-        }
-
         let products = await Product.find({});
         let id;
-        if (products.length > 0) {
-            let last_product_array = products.slice(-1);
-            let last_product = last_product_array[0];
+        if(products.length > 0){
+            let last_product = products[products.length - 1]; // Simplified
             id = last_product.id + 1;
         } else {
             id = 1;
         }
 
         const product = new Product({
-            id: id,
-            name: name,
-            image: image,
-            category: category,
-            new_price: new_price,
-            old_price: old_price,
+            id:id,
+            name:req.body.name,
+            image:req.body.image,
+            category:req.body.category,
+            new_price:req.body.new_price,
+            old_price:req.body.old_price,
         });
-
+        console.log("Attempting to save product:", product);
         await product.save();
-        console.log("Product saved successfully:", product.name);
-        res.status(201).json({ // 201 Created status
-            success: true,
-            name: product.name,
-            message: "Product added successfully!"
+        console.log("Product saved successfully");
+        res.json({
+            success:true,
+            name:req.body.name,
         });
     } catch (error) {
         console.error("Error adding product:", error);
-        if (error.code === 11000) { // Duplicate key error (e.g., if ID is not unique)
+        if (error.code === 11000) { // MongoDB duplicate key error code
             return res.status(409).json({
-                success: false,
-                message: "Product with this ID already exists. Please try a different ID or re-check the logic."
+                success:false,
+                message:"Product with this ID already exists. Please try again."
             });
         }
         res.status(500).json({
-            success: false,
-            message: "Failed to add product. " + error.message
+            success:false,
+            message:"Failed to add product. " + error.message
         });
     }
 });
@@ -189,37 +161,35 @@ app.post('/addproduct', async (req, res) => {
 // --- API to Delete Product ---
 app.post('/removeproduct', async (req, res) => {
     try {
-        const productIdToDelete = req.body.id; // This should be the Mongoose _id, not your custom `id` field
+        const productIdToDelete = req.body.id; // This will be MongoDB's _id string from frontend
 
         if (!productIdToDelete) {
-            return res.status(400).json({ success: false, message: "Product ID is required for removal." });
+            console.log("Error: Product ID not provided for removal.");
+            return res.status(400).json({ success: false, message: "Product ID is required." });
         }
 
         const deletedProduct = await Product.findByIdAndDelete(productIdToDelete);
 
         if (!deletedProduct) {
-            return res.status(404).json({ success: false, message: "Product not found or already deleted." });
+            // Corrected: Use backticks for template literal
+            console.log(`Product with ID ${productIdToDelete} not found.`);
+            return res.status(404).json({ success: false, message: "Product not found." });
         }
 
-        // Optional: Delete image from Cloudinary
-        // This logic can be complex if you have multiple versions or transformations.
-        // It's generally better to handle Cloudinary cleanup asynchronously or with webhooks
-        // if exact matching of public_id is tricky.
+        // Optional: If you want to delete the image from Cloudinary when product is removed
         /*
         if (deletedProduct.image) {
-            try {
-                // Extract public ID from Cloudinary URL:
-                // e.g., 'https://res.cloudinary.com/your_cloud_name/image/upload/v12345/folder/public_id.png'
-                const urlParts = deletedProduct.image.split('/');
-                const filenameWithExtension = urlParts.pop(); // e.g., 'public_id.png'
-                const folderName = urlParts.pop(); // e.g., 'folder'
-                const publicId = `${folderName}/${filenameWithExtension.split('.')[0]}`;
+            const urlParts = deletedProduct.image.split('/');
+            const folderName = urlParts[urlParts.length - 2];
+            const fileNameWithExtension = urlParts[urlParts.length - 1];
+            // Corrected: Use backticks for template literal
+            const publicId = `${folderName}/${fileNameWithExtension.split('.')[0]}`;
 
+            try {
                 await cloudinary.uploader.destroy(publicId);
                 console.log(`Image ${publicId} deleted from Cloudinary.`);
             } catch (cloudinaryError) {
-                console.warn(`Failed to delete image from Cloudinary for product ${deletedProduct.name}:`, cloudinaryError.message);
-                // Don't fail the product deletion just because image deletion failed
+                console.error(`Failed to delete image ${publicId} from Cloudinary:`, cloudinaryError);
             }
         }
         */
@@ -241,127 +211,122 @@ app.post('/removeproduct', async (req, res) => {
 });
 
 // --- API for Getting All Products ---
-app.get('/allproducts', async (req, res) => {
+app.get('/allproducts',async (req,res)=>{
     try {
-        const products = await Product.find({});
-        if (!products) { // Defensive check
-            return res.status(500).json({ success: false, message: "Failed to retrieve product data." });
-        }
-        console.log("All products fetched.");
-        res.json(products); // Send as JSON
+        let products = await Product.find({});
+        console.log("All products Fetched");
+        res.send(products); // Consider wrapping in { success: true, products: products }
     } catch (error) {
         console.error("Error fetching all products:", error);
         res.status(500).json({
-            success: false,
-            message: "Failed to fetch products. " + error.message
+            success:false,
+            message:"Failed to fetch products. " + error.message
         });
     }
 });
 
 // --- Schema for User Model ---
-const Users = mongoose.model('Users', {
-    name: {
-        type: String,
+const Users = mongoose.model('Users',{
+    name:{
+        type:String,
     },
-    email: {
-        type: String,
-        unique: true,
-        required: true
+    email:{
+        type:String,
+        unique:true,
+        required:true // Corrected to required
     },
-    password: {
-        type: String,
-        required: true
+    password:{
+        type:String,
+        required:true // Corrected to required
     },
-    cartData: {
-        type: Object,
-        default: {}
+    cartData:{ // Corrected from 'cartDara' to 'cartData'
+        type:Object,
+        default:{}
     },
-    date: {
-        type: Date,
-        default: Date.now,
+    date:{
+        type:Date,
+        default:Date.now,
     }
 });
 
 // --- Creating Endpoint for Registering User (Signup) ---
-app.post('/signup', async (req, res) => {
+app.post('/signup',async(req,res)=>{
     try {
-        const { name, email, password } = req.body;
-        if (!name || !email || !password) {
+        // Basic validation for request body
+        if (!req.body.name || !req.body.email || !req.body.password) {
             return res.status(400).json({ success: false, errors: "Missing required fields (name, email, password)." });
         }
 
-        let check = await Users.findOne({ email: email });
-        if (check) {
-            return res.status(400).json({ success: false, errors: "Existing user found with this Email ID." });
+        let check = await Users.findOne({email:req.body.email});
+        if(check){
+            return res.status(400).json({success:false,errors:"Existing user found with same Email ID"});
         }
 
+        // Initialize cartData with 300 product IDs, each with quantity 0
         let cart = {};
-        for (let i = 1; i <= 300; i++) { // Initialize cart for up to 300 product IDs
+        for (let i = 1; i <= 300; i++) {
             cart[i] = 0;
         }
 
-        // Hash password before saving
-        const salt = await bcrypt.genSalt(10); // Generate salt
-        const hashedPassword = await bcrypt.hash(password, salt); // Hash password
-
         const user = new Users({
-            name: name,
-            email: email,
-            password: hashedPassword, // Store hashed password
-            cartData: cart,
+            name:req.body.name,
+            email:req.body.email,
+            password:req.body.password,
+            cartData:cart, // Corrected field name
         });
 
         await user.save();
 
         const data = {
-            user: {
-                id: user._id // Use MongoDB's default _id for JWT payload
+            user:{
+                id:user.id
             }
         };
 
-        const token = jwt.sign(data, process.env.JWT_SECRET); // Use env variable for secret
+        const token = jwt.sign(data, process.env.JWT_SECRET || 'secret_ecom'); // Use env var for JWT secret
 
-        res.status(201).json({ success: true, token }); // 201 Created
+        res.json({success:true,token});
+
     } catch (error) {
         console.error("Error during user signup:", error);
-        if (error.code === 11000) { // Duplicate key error for email
+        if (error.code === 11000) { // MongoDB duplicate key error code
             return res.status(409).json({
-                success: false,
-                message: "Email already registered. Please use a different email."
+                success:false,
+                message:"Email already registered. Please use a different email."
             });
         }
         res.status(500).json({
-            success: false,
-            message: "Server error during signup. " + error.message
+            success:false,
+            message:"Server error during signup. " + error.message
         });
     }
 });
 
 // --- Creating Endpoint for User Login ---
-app.post('/login', async (req, res) => {
+app.post('/login',async (req,res)=>{
     try {
-        const { email, password } = req.body;
-        if (!email || !password) {
+        if (!req.body.email || !req.body.password) {
             return res.status(400).json({ success: false, errors: "Missing email or password." });
         }
 
-        let user = await Users.findOne({ email: email });
-        if (user) {
-            // Compare submitted password with hashed password
-            const passCompare = await bcrypt.compare(password, user.password);
-            if (passCompare) {
+        let user = await Users.findOne({email:req.body.email});
+        if(user){
+            const passCompare = req.body.password === user.password; // IMPORTANT: Hash passwords in production!
+            if(passCompare){
                 const data = {
-                    user: {
-                        id: user._id
+                    user:{
+                        id:user.id
                     }
-                };
-                const token = jwt.sign(data, process.env.JWT_SECRET);
-                res.json({ success: true, token });
-            } else {
-                res.status(401).json({ success: false, errors: "Wrong password." }); // 401 Unauthorized
+                }
+                const token = jwt.sign(data, process.env.JWT_SECRET || 'secret_ecom'); // Use env var for JWT secret
+                res.json({success:true,token});
             }
-        } else {
-            res.status(404).json({ success: false, errors: "User not found with this Email-id." }); // 404 Not Found
+            else{
+                res.json({success:false,errors:"Wrong password"});
+            }
+        }
+        else{
+            res.json({success:false,errors:"Wrong Email-id"});
         }
     } catch (error) {
         console.error("Error during user login:", error);
@@ -369,49 +334,78 @@ app.post('/login', async (req, res) => {
     }
 });
 
+// --- Creating Endpoint for New Collection Data ---
+app.get('/newcollection',async (req,res)=>{
+    try {
+        let products = await Product.find({});
+        let newcollection = products.slice(-8);
+        console.log("Newcollection fetched");
+        res.send(newcollection);
+    } catch (error) {
+        console.error("Error fetching new collection:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch new collection. " + error.message });
+    }
+});
+
+// --- Creating Endpoint for Popular in Women ---
+app.get('/popularinwomen',async (req,res)=>{
+    try {
+        let products = await Product.find({category:"Women"});
+        let popular_in_women = products.slice(0,4);
+        console.log("Popular in women fetched");
+        res.send(popular_in_women);
+    } catch (error) {
+        console.error("Error fetching popular in women products:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch popular in women products. " + error.message });
+    }
+});
+
 // --- Middleware to fetch user from JWT token ---
-const fetchUser = async (req, res, next) => {
+const fetchUser = async (req,res,next)=>{
     const token = req.header('auth-token');
     if (!token) {
-        return res.status(401).send({ errors: "Please authenticate using a valid token (Token missing)." });
+        return res.status(401).send({errors:"Please authenticate using a valid token"})
     }
-    try {
-        const data = jwt.verify(token, process.env.JWT_SECRET); // Use env variable for secret
+    try{
+        // Corrected: Use env var for JWT secret
+        const data = jwt.verify(token, process.env.JWT_SECRET || 'secret_ecom');
         req.user = data.user;
         next();
-    } catch (error) {
+    }catch(error){
         console.error("JWT verification error:", error);
-        return res.status(401).send({ errors: "Please authenticate using a valid token (Invalid token)." });
+        return res.status(401).send({errors:"Please authenticate using a valid token"});
     }
 };
 
 // --- Creating Endpoint for Adding Product to Cart ---
-app.post('/addtocart', fetchUser, async (req, res) => {
+app.post('/addtocart',fetchUser, async (req,res)=>{
     try {
         const productId = req.body.itemId;
 
         if (!productId) {
             return res.status(400).json({ success: false, message: "Product ID (itemId) is required." });
         }
-        // Assuming your product IDs are numbers
-        if (typeof productId !== 'number' || productId < 1) { // Removed upper limit of 300, as it's arbitrary
-            return res.status(400).json({ success: false, message: "Invalid product ID. Must be a positive number." });
+
+        // Added more robust type and range validation
+        if (typeof productId !== 'number' || productId < 1 || productId > 300) {
+            return res.status(400).json({ success: false, message: "Invalid product ID. Must be a number between 1 and 300." });
         }
 
-        let userData = await Users.findOne({ _id: req.user.id });
+        let userData = await Users.findOne({_id:req.user.id});
 
         if (!userData) {
             return res.status(404).json({ success: false, message: "User not found." });
         }
 
-        // Ensure cartData is an object
+        // Ensure cartData is an object before attempting to modify
         if (!userData.cartData || typeof userData.cartData !== 'object') {
             userData.cartData = {};
         }
 
+        // Increment quantity or initialize to 1 if not present
         userData.cartData[productId] = (userData.cartData[productId] || 0) + 1;
 
-        await Users.findOneAndUpdate({ _id: req.user.id }, { cartData: userData.cartData });
+        await Users.findOneAndUpdate({_id:req.user.id},{cartData:userData.cartData});
 
         res.json({ success: true, message: "Product added to cart successfully!", cartData: userData.cartData });
 
@@ -429,8 +423,10 @@ app.post('/removefromcart', fetchUser, async (req, res) => {
         if (!productId) {
             return res.status(400).json({ success: false, message: "Product ID (itemId) is required." });
         }
-        if (typeof productId !== 'number' || productId < 1) {
-            return res.status(400).json({ success: false, message: "Invalid product ID. Must be a positive number." });
+
+        // Added more robust type and range validation
+        if (typeof productId !== 'number' || productId < 1 || productId > 300) {
+            return res.status(400).json({ success: false, message: "Invalid product ID. Must be a number between 1 and 300." });
         }
 
         let userData = await Users.findOne({ _id: req.user.id });
@@ -439,14 +435,15 @@ app.post('/removefromcart', fetchUser, async (req, res) => {
             return res.status(404).json({ success: false, message: "User not found." });
         }
 
+        // Check if cartData exists and if the product is in the cart
         if (!userData.cartData || typeof userData.cartData !== 'object' || !userData.cartData[productId]) {
             return res.status(400).json({ success: false, message: "Product not found in cart or quantity is already 0." });
         }
 
+        // Decrement quantity or remove if quantity becomes 0
         if (userData.cartData[productId] > 1) {
             userData.cartData[productId] -= 1;
         } else {
-            // Remove the item from cart if quantity becomes 0
             delete userData.cartData[productId];
         }
 
@@ -476,66 +473,8 @@ app.post('/getcart', fetchUser, async (req, res) => {
 });
 
 
-// --- Creating Endpoint for New Collection Data ---
-app.get('/newcollection', async (req, res) => {
-    try {
-        let products = await Product.find({});
-        if (!products) {
-            return res.status(500).json({ success: false, message: "Failed to retrieve new collection data." });
-        }
-        // Ensure there are enough products to slice
-        let newcollection = products.slice(Math.max(0, products.length - 8)); // Get last 8 products
-        console.log("Newcollection fetched");
-        res.json(newcollection);
-    } catch (error) {
-        console.error("Error fetching new collection:", error);
-        res.status(500).json({ success: false, message: "Failed to fetch new collection. " + error.message });
-    }
-<<<<<<< HEAD
-=======
-});
-
-// --- Creating Endpoint for Popular in Women ---
-app.get('/popularinwomen', async (req, res) => {
-    try {
-        let products = await Product.find({ category: "women" }); // Use lowercase "women" for consistency
-        if (!products) {
-            return res.status(500).json({ success: false, message: "Failed to retrieve popular women's products." });
-        }
-        let popular_in_women = products.slice(0, 4); // Get first 4 products
-        console.log("Popular in women fetched");
-        res.json(popular_in_women);
-    } catch (error) {
-        console.error("Error fetching popular in women products:", error);
-        res.status(500).json({ success: false, message: "Failed to fetch popular in women products. " + error.message });
-    }
-});
-
-
 // --- Start the Server ---
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
->>>>>>> 8a9ce23ef09bbf439c57ae97dbc4f4f66995b4e2
-});
-
-// --- Creating Endpoint for Popular in Women ---
-app.get('/popularinwomen', async (req, res) => {
-    try {
-        let products = await Product.find({ category: "women" }); // Use lowercase "women" for consistency
-        if (!products) {
-            return res.status(500).json({ success: false, message: "Failed to retrieve popular women's products." });
-        }
-        let popular_in_women = products.slice(0, 4); // Get first 4 products
-        console.log("Popular in women fetched");
-        res.json(popular_in_women);
-    } catch (error) {
-        console.error("Error fetching popular in women products:", error);
-        res.status(500).json({ success: false, message: "Failed to fetch popular in women products. " + error.message });
-    }
-});
-
-
-// --- Start the Server ---
-app.listen(PORT, () => {
+app.listen(PORT,()=>{
+    // Corrected: Use backticks for template literal
     console.log(`Server running on port ${PORT}`);
 });
