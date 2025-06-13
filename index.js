@@ -329,7 +329,7 @@ app.get('/newcollection', async (req, res) => {
 // Creating Endpoint for Popular in Women
 app.get('/popularinwomen', async (req, res) => {
     try {
-        let products = await Product.find({ category: "women" }); // Ensure category matches schema value
+        let products = await Product.find({ category: "Women" }); // Ensure category matches schema value
         let popular_in_women = products.slice(0, 4); // Get first 4 popular products
         console.log("Popular in women fetched");
         res.send(popular_in_women);
